@@ -146,9 +146,9 @@ netbsd_get_device_list(struct libusb_context * ctx,
 			if (dev == NULL)
 				return (LIBUSB_ERROR_NO_MEM);
 
-			dev->bus_number = di.udi_bus;
-			dev->device_address = di.udi_addr;
-			dev->speed = di.udi_speed;
+			dev->bus_number = 1 + di.udi_bus;
+			dev->device_address = 1 + di.udi_addr;
+			dev->speed = di.udi_speed; /* NetBSD #define's happen to match libusb enum */
 
 			dpriv = usbi_get_device_priv(dev);
 			strlcpy(dpriv->devnode, devnode, sizeof(devnode));

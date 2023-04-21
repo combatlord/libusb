@@ -279,6 +279,7 @@ enum libusb_transfer_status usbd_status_to_libusb_transfer_status(USBD_STATUS st
 	case USBD_STATUS_CANCELED:
 		return LIBUSB_TRANSFER_CANCELLED;
 	case USBD_STATUS_ENDPOINT_HALTED:
+	case USBD_STATUS_STALL_PID:
 		return LIBUSB_TRANSFER_STALL;
 	case USBD_STATUS_DEVICE_GONE:
 		return LIBUSB_TRANSFER_NO_DEVICE;
@@ -607,8 +608,6 @@ static int windows_set_option(struct libusb_context *ctx, enum libusb_option opt
 {
 	struct windows_context_priv *priv = usbi_get_context_priv(ctx);
 
-	UNUSED(ap);
-
 	if (option == LIBUSB_OPTION_USE_USBDK) {
 		if (!usbdk_available) {
 			usbi_err(ctx, "UsbDk backend not available");
@@ -617,6 +616,10 @@ static int windows_set_option(struct libusb_context *ctx, enum libusb_option opt
 		usbi_dbg(ctx, "switching context %p to use UsbDk backend", ctx);
 		priv->backend = &usbdk_backend;
 		return LIBUSB_SUCCESS;
+	}
+
+	if (priv->backend->set_option) {
+		return priv->backend->set_option(ctx, option, ap);
 	}
 
 	return LIBUSB_ERROR_NOT_SUPPORTED;

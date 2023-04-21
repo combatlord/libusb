@@ -128,7 +128,7 @@ wasm32-**)
 	backend=windows
 	platform=windows
 	test "x$enable_shared" = xyes && create_import_lib=yes
-	EXTRA_CFLAGS="-mwin32 -fno-omit-frame-pointer"
+	EXTRA_CFLAGS="-fno-omit-frame-pointer"
 	EXTRA_LDFLAGS="-static-libgcc"
 	;;
 *)
@@ -224,7 +224,7 @@ sunos)
 windows)
 	AC_CHECK_TYPES([struct timespec], [], [], [[#include <time.h>]])
 	AC_DEFINE([_WIN32_WINNT], [_WIN32_WINNT_VISTA], [Define to the oldest supported Windows version.])
-	LT_LDFLAGS="${LT_LDFLAGS} -avoid-version -Wl,--add-stdcall-alias"
+	LT_LDFLAGS="${LT_LDFLAGS} -avoid-version"
 	;;
 emscripten)
 	AC_SUBST(EXEEXT, [.html])
@@ -399,6 +399,18 @@ if test "x$backend" = xwindows; then
 	AC_COMPILE_IFELSE([AC_LANG_PROGRAM([], [])],
 		[EXTRA_CFLAGS="${EXTRA_CFLAGS} -Wno-cast-function-type"],
 		[])
+	CFLAGS="${saved_CFLAGS}"
+fi
+
+dnl Some linkers do not support the '--add-stdcall-alias' option so check for it here
+if test "x$backend" = xwindows; then
+	saved_CFLAGS="${CFLAGS}"
+	CFLAGS="-Wl,--add-stdcall-alias"
+	AC_MSG_CHECKING([if linker supports --add-stdcall-alias])
+	AC_LINK_IFELSE([AC_LANG_PROGRAM([], [])],
+		[AC_MSG_RESULT([yes])
+		 LT_LDFLAGS="${LT_LDFLAGS} -Wl,--add-stdcall-alias"],
+		[AC_MSG_RESULT([no])])
 	CFLAGS="${saved_CFLAGS}"
 fi
 

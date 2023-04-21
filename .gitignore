@@ -51,6 +51,8 @@ doc/api-1.0
 *.opt
 Debug
 Release
+Debug-MT
+Release-MT
 *.db
 *.user
 *.suo
@@ -69,3 +71,6 @@ xcuserdata
 *.xccheckout
 *.xcscmblueprint
 *.xcworkspace
+build/
+tags
+cscope.out

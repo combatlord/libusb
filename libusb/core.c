@@ -1,7 +1,7 @@
 /* -*- Mode: C; indent-tabs-mode:t ; c-basic-offset:8 -*- */
 /*
  * Core functions for libusb
- * Copyright © 2012-2013 Nathan Hjelm <hjelmn@cs.unm.edu>
+ * Copyright © 2012-2023 Nathan Hjelm <hjelmn@cs.unm.edu>
  * Copyright © 2007-2008 Daniel Drake <dsd@gentoo.org>
  * Copyright © 2001 Johannes Erdfelt <johannes@erdfelt.com>
  *
@@ -111,17 +111,18 @@ struct list_head active_contexts_list;
  * libusb uses stderr for all logging. By default, logging is set to NONE,
  * which means that no output will be produced. However, unless the library
  * has been compiled with logging disabled, then any application calls to
- * libusb_set_option(ctx, LIBUSB_OPTION_LOG_LEVEL, level), or the setting of the
- * environmental variable LIBUSB_DEBUG outside of the application, can result
- * in logging being produced. Your application should therefore not close
- * stderr, but instead direct it to the null device if its output is
- * undesirable.
+ * libusb_set_option(ctx, LIBUSB_OPTION_LOG_LEVEL, level),
+ * libusb_init_context, or the setting of the environmental variable
+ * LIBUSB_DEBUG outside of the application, can result in logging being
+ * produced. Your application should therefore not close stderr, but instead
+ * direct it to the null device if its output is undesirable.
  *
- * The libusb_set_option(ctx, LIBUSB_OPTION_LOG_LEVEL, level) function can be
- * used to enable logging of certain messages. Under standard configuration,
- * libusb doesn't really log much so you are advised to use this function
- * to enable all error/warning/ informational messages. It will help debug
- * problems with your software.
+ * The libusb_set_option(ctx, LIBUSB_OPTION_LOG_LEVEL, level) or
+ * libusb_init_context functions can be used to enable logging of certain
+ * messages. With the default configuration, libusb will not log much so if
+ * you are advised to use one of these functions to enable all
+ * error/warning/informational messages. It will help debug problems with your
+ * software.
  *
  * The logged messages are unstructured. There is no one-to-one correspondence
  * between messages being logged and success or failure return codes from
@@ -137,19 +138,19 @@ struct list_head active_contexts_list;
  * The LIBUSB_DEBUG environment variable can be used to enable message logging
  * at run-time. This environment variable should be set to a log level number,
  * which is interpreted the same as the
- * libusb_set_option(ctx, LIBUSB_OPTION_LOG_LEVEL, level) parameter. When this
- * environment variable is set, the message logging verbosity level is fixed
- * and libusb_set_option(ctx, LIBUSB_OPTION_LOG_LEVEL, level) effectively does
- * nothing.
+ * libusb_set_option(ctx, LIBUSB_OPTION_LOG_LEVEL, level), or
+ * libusb_init_context(&ctx, &(struct libusb_init_option){.option = LIBUSB_OPTION_LOG_LEVEL, .value = {.ival = level}}, 0).
+ * When the environment variable is set, the message logging verbosity level is
+ * fixed and setting the LIBUSB_OPTION_LOG_LEVEL option has no effect.
  *
  * libusb can be compiled without any logging functions, useful for embedded
- * systems. In this case, libusb_set_option(ctx, LIBUSB_OPTION_LOG_LEVEL, level)
- * and the LIBUSB_DEBUG environment variable have no effects.
+ * systems. In this case, neither the LIBUSB_OPTION_LOG_LEVEL option, nor the
+ * LIBUSB_DEBUG environment variable will have any effect.
  *
  * libusb can also be compiled with verbose debugging messages always. When
  * the library is compiled in this way, all messages of all verbosities are
- * always logged. libusb_set_option(ctx, LIBUSB_OPTION_LOG_LEVEL, level) and
- * the LIBUSB_DEBUG environment variable have no effects.
+ * always logged. Again, in this case, neither the LIBUSB_OPTION_LOG_LEVEL
+ * option, nor the LIBUSB_DEBUG environment variable will have any effect.
  *
  * \section remarks Other remarks
  *
@@ -327,9 +328,9 @@ if (cfg != desired)
  * developed modules may both use libusb.
  *
  * libusb is written to allow for these multiple user scenarios. The two
- * "instances" of libusb will not interfere: libusb_set_option() calls
- * from one user will not affect the same settings for other users, other
- * users can continue using libusb after one of them calls libusb_exit(), etc.
+ * "instances" of libusb will not interfere: an option set by one user will have
+ * no effect the same option for other users, other users can continue using
+ * libusb after one of them calls libusb_exit(), etc.
  *
  * This is made possible through libusb's <em>context</em> concept. When you
  * call libusb_init(), you are (optionally) given a context. You can then pass
@@ -413,6 +414,7 @@ if (cfg != desired)
   * - libusb_get_device_speed()
   * - libusb_get_iso_packet_buffer()
   * - libusb_get_iso_packet_buffer_simple()
+  * - libusb_get_max_alt_packet_size()
   * - libusb_get_max_iso_packet_size()
   * - libusb_get_max_packet_size()
   * - libusb_get_next_timeout()
@@ -436,6 +438,7 @@ if (cfg != desired)
   * - libusb_hotplug_deregister_callback()
   * - libusb_hotplug_register_callback()
   * - libusb_init()
+  * - libusb_init_context()
   * - libusb_interrupt_event_handler()
   * - libusb_interrupt_transfer()
   * - libusb_kernel_driver_active()
@@ -1079,57 +1082,41 @@ out:
 	return r;
 }
 
-/** \ingroup libusb_dev
- * Calculate the maximum packet size which a specific endpoint is capable is
- * sending or receiving in the duration of 1 microframe
- *
- * Only the active configuration is examined. The calculation is based on the
- * wMaxPacketSize field in the endpoint descriptor as described in section
- * 9.6.6 in the USB 2.0 specifications.
- *
- * If acting on an isochronous or interrupt endpoint, this function will
- * multiply the value found in bits 0:10 by the number of transactions per
- * microframe (determined by bits 11:12). Otherwise, this function just
- * returns the numeric value found in bits 0:10. For USB 3.0 device, it
- * will attempts to retrieve the Endpoint Companion Descriptor to return
- * wBytesPerInterval.
- *
- * This function is useful for setting up isochronous transfers, for example
- * you might pass the return value from this function to
- * libusb_set_iso_packet_lengths() in order to set the length field of every
- * isochronous packet in a transfer.
- *
- * Since v1.0.3.
- *
- * \param dev a device
- * \param endpoint address of the endpoint in question
- * \returns the maximum packet size which can be sent/received on this endpoint
- * \returns \ref LIBUSB_ERROR_NOT_FOUND if the endpoint does not exist
- * \returns \ref LIBUSB_ERROR_OTHER on other failure
- */
-int API_EXPORTED libusb_get_max_iso_packet_size(libusb_device *dev,
-	unsigned char endpoint)
+static const struct libusb_endpoint_descriptor *find_alt_endpoint(
+	struct libusb_config_descriptor *config,
+	int iface_idx, int altsetting_idx, unsigned char endpoint)
 {
-	struct libusb_config_descriptor *config;
-	const struct libusb_endpoint_descriptor *ep;
+	if (iface_idx >= config->bNumInterfaces) {
+		return NULL;
+	}
+
+	const struct libusb_interface *iface = &config->interface[iface_idx];
+
+	if (altsetting_idx >= iface->num_altsetting) {
+		return NULL;
+	}
+
+	const struct libusb_interface_descriptor *altsetting
+		= &iface->altsetting[altsetting_idx];
+	int ep_idx;
+
+	for (ep_idx = 0; ep_idx < altsetting->bNumEndpoints; ep_idx++) {
+		const struct libusb_endpoint_descriptor *ep =
+			&altsetting->endpoint[ep_idx];
+		if (ep->bEndpointAddress == endpoint)
+			return ep;
+	}
+	return NULL;
+}
+
+static int get_endpoint_max_packet_size(libusb_device *dev,
+	const struct libusb_endpoint_descriptor *ep)
+{
 	struct libusb_ss_endpoint_companion_descriptor *ss_ep_cmp;
 	enum libusb_endpoint_transfer_type ep_type;
 	uint16_t val;
-	int r;
+	int r = 0;
 	int speed;
-
-	r = libusb_get_active_config_descriptor(dev, &config);
-	if (r < 0) {
-		usbi_err(DEVICE_CTX(dev),
-			"could not retrieve active config descriptor");
-		return LIBUSB_ERROR_OTHER;
-	}
-
-	ep = find_endpoint(config, endpoint);
-	if (!ep) {
-		r = LIBUSB_ERROR_NOT_FOUND;
-		goto out;
-	}
 
 	speed = libusb_get_device_speed(dev);
 	if (speed >= LIBUSB_SPEED_SUPER) {
@@ -1150,6 +1137,124 @@ int API_EXPORTED libusb_get_max_iso_packet_size(libusb_device *dev,
 		    || ep_type == LIBUSB_ENDPOINT_TRANSFER_TYPE_INTERRUPT)
 			r *= (1 + ((val >> 11) & 3));
 	}
+
+	return r;
+}
+
+/** \ingroup libusb_dev
+ * Calculate the maximum packet size which a specific endpoint is capable is
+ * sending or receiving in the duration of 1 microframe
+ *
+ * Only the active configuration is examined. The calculation is based on the
+ * wMaxPacketSize field in the endpoint descriptor as described in section
+ * 9.6.6 in the USB 2.0 specifications.
+ *
+ * If acting on an isochronous or interrupt endpoint, this function will
+ * multiply the value found in bits 0:10 by the number of transactions per
+ * microframe (determined by bits 11:12). Otherwise, this function just
+ * returns the numeric value found in bits 0:10. For USB 3.0 device, it
+ * will attempts to retrieve the Endpoint Companion Descriptor to return
+ * wBytesPerInterval.
+ *
+ * This function is useful for setting up isochronous transfers, for example
+ * you might pass the return value from this function to
+ * libusb_set_iso_packet_lengths() in order to set the length field of every
+ * isochronous packet in a transfer.
+ *
+ * This function only considers the first alternate setting of the interface.
+ * If the endpoint has different maximum packet sizes for different alternate
+ * settings, you probably want libusb_get_max_alt_packet_size() instead.
+ *
+ * Since v1.0.3.
+ *
+ * \param dev a device
+ * \param endpoint address of the endpoint in question
+ * \returns the maximum packet size which can be sent/received on this endpoint
+ * \returns \ref LIBUSB_ERROR_NOT_FOUND if the endpoint does not exist
+ * \returns \ref LIBUSB_ERROR_OTHER on other failure
+ * \see libusb_get_max_alt_packet_size
+ */
+int API_EXPORTED libusb_get_max_iso_packet_size(libusb_device *dev,
+	unsigned char endpoint)
+{
+	struct libusb_config_descriptor *config;
+	const struct libusb_endpoint_descriptor *ep;
+	int r;
+
+	r = libusb_get_active_config_descriptor(dev, &config);
+	if (r < 0) {
+		usbi_err(DEVICE_CTX(dev),
+			"could not retrieve active config descriptor");
+		return LIBUSB_ERROR_OTHER;
+	}
+
+	ep = find_endpoint(config, endpoint);
+	if (!ep) {
+		r = LIBUSB_ERROR_NOT_FOUND;
+		goto out;
+	}
+
+	r = get_endpoint_max_packet_size(dev, ep);
+
+out:
+	libusb_free_config_descriptor(config);
+	return r;
+}
+
+/** \ingroup libusb_dev
+ * Calculate the maximum packet size which a specific endpoint is capable of
+ * sending or receiving in the duration of 1 microframe
+ *
+ * Only the active configuration is examined. The calculation is based on the
+ * wMaxPacketSize field in the endpoint descriptor as described in section
+ * 9.6.6 in the USB 2.0 specifications.
+ *
+ * If acting on an isochronous or interrupt endpoint, this function will
+ * multiply the value found in bits 0:10 by the number of transactions per
+ * microframe (determined by bits 11:12). Otherwise, this function just
+ * returns the numeric value found in bits 0:10. For USB 3.0 device, it
+ * will attempts to retrieve the Endpoint Companion Descriptor to return
+ * wBytesPerInterval.
+ *
+ * This function is useful for setting up isochronous transfers, for example
+ * you might pass the return value from this function to
+ * libusb_set_iso_packet_lengths() in order to set the length field of every
+ * isochronous packet in a transfer.
+ *
+ * Since v1.0.27.
+ *
+ * \param dev a device
+ * \param interface_number the <tt>bInterfaceNumber</tt> of the interface
+ * the endpoint belongs to
+ * \param alternate_setting the <tt>bAlternateSetting</tt> of the interface
+ * \param endpoint address of the endpoint in question
+ * \returns the maximum packet size which can be sent/received on this endpoint
+ * \returns \ref LIBUSB_ERROR_NOT_FOUND if the endpoint does not exist
+ * \returns \ref LIBUSB_ERROR_OTHER on other failure
+ * \see libusb_get_max_iso_packet_size
+ */
+int API_EXPORTED libusb_get_max_alt_packet_size(libusb_device *dev,
+	int interface_number, int alternate_setting, unsigned char endpoint)
+{
+	struct libusb_config_descriptor *config;
+	const struct libusb_endpoint_descriptor *ep;
+	int r;
+
+	r = libusb_get_active_config_descriptor(dev, &config);
+	if (r < 0) {
+		usbi_err(DEVICE_CTX(dev),
+			"could not retrieve active config descriptor");
+		return LIBUSB_ERROR_OTHER;
+	}
+
+	ep = find_alt_endpoint(config, interface_number,
+		alternate_setting, endpoint);
+	if (!ep) {
+		r = LIBUSB_ERROR_NOT_FOUND;
+		goto out;
+	}
+
+	r = get_endpoint_max_packet_size(dev, ep);
 
 out:
 	libusb_free_config_descriptor(config);
@@ -1209,11 +1314,10 @@ void API_EXPORTED libusb_unref_device(libusb_device *dev)
  * handle for the underlying device. The handle allows you to use libusb to
  * perform I/O on the device in question.
  *
- * Call libusb_set_option() with the parameters (NULL,
- * \ref LIBUSB_OPTION_NO_DEVICE_DISCOVERY) before libusb_init() if you want
- * to skip enumeration of USB devices. In particular, this might be
- * needed on Android if you don't have authority to access USB devices
- * in general.
+ * Call libusb_init_context with the LIBUSB_OPTION_NO_DEVICE_DISCOVERY
+ * option if you want to skip enumeration of USB devices. In particular, this
+ * might be needed on Android if you don't have authority to access USB
+ * devices in general. Setting this option with libusb_set_option is deprecated.
  *
  * On Linux, the system device handle must be a valid file descriptor opened
  * on the device node.
@@ -1427,7 +1531,7 @@ static void do_close(struct libusb_context *ctx,
 		 * the device handle is invalid
 		 */
 		usbi_dbg(ctx, "Removed transfer %p from the in-flight list because device handle %p closed",
-			 transfer, dev_handle);
+			 (void *) transfer, (void *) dev_handle);
 	}
 	usbi_mutex_unlock(&ctx->flying_transfers_lock);
 
@@ -1763,7 +1867,6 @@ int API_EXPORTED libusb_set_interface_alt_setting(libusb_device_handle *dev_hand
 		return LIBUSB_ERROR_INVALID_PARAM;
 
 	if (!usbi_atomic_load(&dev_handle->dev->attached)) {
-		usbi_mutex_unlock(&dev_handle->lock);
 		return LIBUSB_ERROR_NO_DEVICE;
 	}
 
@@ -2099,8 +2202,8 @@ int API_EXPORTED libusb_set_auto_detach_kernel_driver(
 }
 
 /** \ingroup libusb_lib
- * \deprecated Use libusb_set_option() instead using the
- * \ref LIBUSB_OPTION_LOG_LEVEL option.
+ * \deprecated Use libusb_set_option() or libusb_init_context() instead
+ * using the \ref LIBUSB_OPTION_LOG_LEVEL option.
  */
 void API_EXPORTED libusb_set_debug(libusb_context *ctx, int level)
 {
@@ -2113,6 +2216,29 @@ void API_EXPORTED libusb_set_debug(libusb_context *ctx, int level)
 #else
 	UNUSED(ctx);
 	UNUSED(level);
+#endif
+}
+
+static void libusb_set_log_cb_internal(libusb_context *ctx, libusb_log_cb cb,
+				       int mode)
+{
+#if defined(ENABLE_LOGGING) && (!defined(ENABLE_DEBUG_LOGGING) || !defined(USE_SYSTEM_LOGGING_FACILITY))
+#if !defined(USE_SYSTEM_LOGGING_FACILITY)
+	if (mode & LIBUSB_LOG_CB_GLOBAL)
+		log_handler = cb;
+#endif
+#if !defined(ENABLE_DEBUG_LOGGING)
+	if (mode & LIBUSB_LOG_CB_CONTEXT) {
+		ctx = usbi_get_context(ctx);
+		ctx->log_handler = cb;
+	}
+#else
+	UNUSED(ctx);
+#endif
+#else
+	UNUSED(ctx);
+	UNUSED(cb);
+	UNUSED(mode);
 #endif
 }
 
@@ -2142,24 +2268,7 @@ void API_EXPORTED libusb_set_debug(libusb_context *ctx, int level)
 void API_EXPORTED libusb_set_log_cb(libusb_context *ctx, libusb_log_cb cb,
 	int mode)
 {
-#if defined(ENABLE_LOGGING) && (!defined(ENABLE_DEBUG_LOGGING) || !defined(USE_SYSTEM_LOGGING_FACILITY))
-#if !defined(USE_SYSTEM_LOGGING_FACILITY)
-	if (mode & LIBUSB_LOG_CB_GLOBAL)
-		log_handler = cb;
-#endif
-#if !defined(ENABLE_DEBUG_LOGGING)
-	if (mode & LIBUSB_LOG_CB_CONTEXT) {
-		ctx = usbi_get_context(ctx);
-		ctx->log_handler = cb;
-	}
-#else
-	UNUSED(ctx);
-#endif
-#else
-	UNUSED(ctx);
-	UNUSED(cb);
-	UNUSED(mode);
-#endif
+	libusb_set_log_cb_internal(ctx, cb, mode);
 }
 
 /** \ingroup libusb_lib
@@ -2189,6 +2298,7 @@ int API_EXPORTEDV libusb_set_option(libusb_context *ctx,
 	enum libusb_option option, ...)
 {
 	int arg = 0, r = LIBUSB_SUCCESS;
+	libusb_log_cb log_cb = NULL;
 	va_list ap;
 
 	va_start(ap, option);
@@ -2197,6 +2307,9 @@ int API_EXPORTEDV libusb_set_option(libusb_context *ctx,
 		if (arg < LIBUSB_LOG_LEVEL_NONE || arg > LIBUSB_LOG_LEVEL_DEBUG) {
 			r = LIBUSB_ERROR_INVALID_PARAM;
 		}
+	}
+	if (LIBUSB_OPTION_LOG_CB == option) {
+		log_cb = (libusb_log_cb) va_arg(ap, libusb_log_cb);
 	}
 	va_end(ap);
 
@@ -2213,12 +2326,15 @@ int API_EXPORTEDV libusb_set_option(libusb_context *ctx,
 		default_context_options[option].is_set = 1;
 		if (LIBUSB_OPTION_LOG_LEVEL == option) {
 			default_context_options[option].arg.ival = arg;
+		} else if (LIBUSB_OPTION_LOG_CB) {
+			default_context_options[option].arg.log_cbval = log_cb;
 		}
 		usbi_mutex_static_unlock(&default_context_lock);
 	}
 
 	ctx = usbi_get_context(ctx);
 	if (NULL == ctx) {
+		libusb_set_log_cb_internal(NULL, log_cb, LIBUSB_LOG_CB_GLOBAL);
 		return LIBUSB_SUCCESS;
 	}
 
@@ -2233,12 +2349,16 @@ int API_EXPORTEDV libusb_set_option(libusb_context *ctx,
 		/* Handle all backend-specific options here */
 	case LIBUSB_OPTION_USE_USBDK:
 	case LIBUSB_OPTION_NO_DEVICE_DISCOVERY:
+	case LIBUSB_OPTION_WINUSB_RAW_IO:
 		if (usbi_backend.set_option)
 			return usbi_backend.set_option(ctx, option, ap);
 
 		return LIBUSB_ERROR_NOT_SUPPORTED;
 		break;
 
+	case LIBUSB_OPTION_LOG_CB:
+		libusb_set_log_cb_internal(ctx, log_cb, LIBUSB_LOG_CB_CONTEXT);
+		break;
 	default:
 		return LIBUSB_ERROR_INVALID_PARAM;
 	}
@@ -2272,7 +2392,8 @@ static enum libusb_log_level get_env_debug_level(void)
  *
  * If you do not provide an output location for a context pointer, a default
  * context will be created. If there was already a default context, it will
- * be reused (and nothing will be initialized/reinitialized).
+ * be reused (and nothing will be initialized/reinitialized). Deprecated in
+ * favor of \ref libusb_init_context().
  *
  * \param ctx Optional output location for context pointer.
  * Only valid on return code 0.
@@ -2280,6 +2401,27 @@ static enum libusb_log_level get_env_debug_level(void)
  * \see libusb_contexts
  */
 int API_EXPORTED libusb_init(libusb_context **ctx)
+{
+	return libusb_init_context(ctx, NULL, 0);
+}
+
+/** \ingroup libusb_lib
+ * Initialize libusb. This function must be called before calling any other
+ * libusb function.
+ *
+ * If you do not provide an output location for a context pointer, a default
+ * context will be created. If there was already a default context, it will
+ * be reused (and nothing will be initialized/reinitialized and options will
+ * be ignored). If num_options is 0 then options is ignored and may be NULL.
+ *
+ * \param ctx Optional output location for context pointer.
+ * Only valid on return code 0.
+ * \param options Optional array of options to set on the new context.
+ * \param num_options Number of elements in the options array.
+ * \returns 0 on success, or a LIBUSB_ERROR code on failure
+ * \see libusb_contexts
+ */
+int API_EXPORTED libusb_init_context(libusb_context **ctx, const struct libusb_init_option options[], int num_options)
 {
 	size_t priv_size = usbi_backend.context_priv_size;
 	struct libusb_context *_ctx;
@@ -2306,14 +2448,14 @@ int API_EXPORTED libusb_init(libusb_context **ctx)
 		return LIBUSB_ERROR_NO_MEM;
 	}
 
+	_ctx->debug = LIBUSB_LOG_LEVEL_NONE;
 #if defined(ENABLE_LOGGING) && !defined(ENABLE_DEBUG_LOGGING)
-	if (NULL == ctx && default_context_options[LIBUSB_OPTION_LOG_LEVEL].is_set) {
-		_ctx->debug = default_context_options[LIBUSB_OPTION_LOG_LEVEL].arg.ival;
-	} else {
+	if (getenv("LIBUSB_DEBUG")) {
 		_ctx->debug = get_env_debug_level();
-	}
-	if (_ctx->debug != LIBUSB_LOG_LEVEL_NONE)
 		_ctx->debug_fixed = 1;
+	} else if (default_context_options[LIBUSB_OPTION_LOG_LEVEL].is_set) {
+		_ctx->debug = default_context_options[LIBUSB_OPTION_LOG_LEVEL].arg.ival;
+	}
 #endif
 
 	usbi_mutex_init(&_ctx->usb_devs_lock);
@@ -2326,7 +2468,24 @@ int API_EXPORTED libusb_init(libusb_context **ctx)
 		if (LIBUSB_OPTION_LOG_LEVEL == option || !default_context_options[option].is_set) {
 			continue;
 		}
-		r = libusb_set_option(_ctx, option);
+		if (LIBUSB_OPTION_LOG_CB != option) {
+			r = libusb_set_option(_ctx, option);
+		} else {
+			r = libusb_set_option(_ctx, option, default_context_options[option].arg.log_cbval);
+		}
+		if (LIBUSB_SUCCESS != r)
+			goto err_free_ctx;
+	}
+
+	/* apply any options provided by the user */
+	for (int i = 0 ; i < num_options ; ++i) {
+		switch(options[i].option) {
+		case LIBUSB_OPTION_LOG_CB:
+			r = libusb_set_option(_ctx, options[i].option, options[i].value.log_cbval);
+			break;
+		default:
+			r = libusb_set_option(_ctx, options[i].option, options[i].value.ival);
+		}
 		if (LIBUSB_SUCCESS != r)
 			goto err_free_ctx;
 	}
@@ -2363,7 +2522,7 @@ int API_EXPORTED libusb_init(libusb_context **ctx)
 
 		if (!usbi_fallback_context) {
 			usbi_fallback_context = _ctx;
-			usbi_warn(usbi_fallback_context, "installing new context as implicit default");
+			usbi_dbg(usbi_fallback_context, "installing new context as implicit default");
 		}
 	}
 

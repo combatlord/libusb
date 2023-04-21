@@ -3,8 +3,8 @@
  * I/O functions for libusb
  * Copyright © 2007-2009 Daniel Drake <dsd@gentoo.org>
  * Copyright © 2001 Johannes Erdfelt <johannes@erdfelt.com>
- * Copyright © 2019 Nathan Hjelm <hjelmn@cs.umm.edu>
- * Copyright © 2019 Google LLC. All rights reserved.
+ * Copyright © 2019-2022 Nathan Hjelm <hjelmn@cs.unm.edu>
+ * Copyright © 2019-2022 Google LLC. All rights reserved.
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Lesser General Public
@@ -312,6 +312,10 @@ if (r == 0 && actual_length == sizeof(data)) {
  * cancellation actually completes, the transfer's callback function will
  * be invoked, and the callback function should check the transfer status to
  * determine that it was cancelled.
+ *
+ * On macOS and iOS it is not possible to cancel a single transfer. In this
+ * case cancelling one transfer on an endpoint will cause all transfers on
+ * that endpoint to be cancelled.
  *
  * Freeing the transfer after it has been cancelled but before cancellation
  * has completed will result in undefined behaviour.
@@ -1338,7 +1342,7 @@ void API_EXPORTED libusb_free_transfer(struct libusb_transfer *transfer)
 	if (!transfer)
 		return;
 
-	usbi_dbg(TRANSFER_CTX(transfer), "transfer %p", transfer);
+	usbi_dbg(TRANSFER_CTX(transfer), "transfer %p", (void *) transfer);
 	if (transfer->flags & LIBUSB_TRANSFER_FREE_BUFFER)
 		free(transfer->buffer);
 
@@ -1500,7 +1504,7 @@ int API_EXPORTED libusb_submit_transfer(struct libusb_transfer *transfer)
 	itransfer->dev = libusb_ref_device(transfer->dev_handle->dev);
 
 	ctx = HANDLE_CTX(transfer->dev_handle);
-	usbi_dbg(ctx, "transfer %p", transfer);
+	usbi_dbg(ctx, "transfer %p", (void *) transfer);
 
 	/*
 	 * Important note on locking, this function takes / releases locks
@@ -1584,16 +1588,18 @@ int API_EXPORTED libusb_submit_transfer(struct libusb_transfer *transfer)
  *   \ref libusb_transfer_status::LIBUSB_TRANSFER_CANCELLED
  *   "LIBUSB_TRANSFER_CANCELLED" for each transfer that was cancelled.
 
- * - Calling this function also sends a \c ClearFeature(ENDPOINT_HALT) request
- *   for the transfer's endpoint. If the device does not handle this request
- *   correctly, the data toggle bits for the endpoint can be left out of sync
- *   between host and device, which can have unpredictable results when the
- *   next data is sent on the endpoint, including data being silently lost.
- *   A call to \ref libusb_clear_halt will not resolve this situation, since
- *   that function uses the same request. Therefore, if your program runs on
- *   Darwin and uses a device that does not correctly implement
- *   \c ClearFeature(ENDPOINT_HALT) requests, it may only be safe to cancel
- *   transfers when followed by a device reset using
+ * - When built for macOS versions prior to 10.5, this function sends a
+ *   \c ClearFeature(ENDPOINT_HALT) request for the transfer's endpoint.
+ *   (Prior to libusb 1.0.27, this request was sent on all Darwin systems.)
+ *   If the device does not handle this request correctly, the data toggle
+ *   bits for the endpoint can be left out of sync between host and device,
+ *   which can have unpredictable results when the next data is sent on
+ *   the endpoint, including data being silently lost. A call to
+ *   \ref libusb_clear_halt will not resolve this situation, since that
+ *   function uses the same request. Therefore, if your program runs on
+ *   macOS < 10.5 (or libusb < 1.0.27), and uses a device that does not
+ *   correctly implement \c ClearFeature(ENDPOINT_HALT) requests, it may
+ *   only be safe to cancel transfers when followed by a device reset using
  *   \ref libusb_reset_device.
  *
  * \param transfer the transfer to cancel
@@ -1609,7 +1615,7 @@ int API_EXPORTED libusb_cancel_transfer(struct libusb_transfer *transfer)
 	struct libusb_context *ctx = ITRANSFER_CTX(itransfer);
 	int r;
 
-	usbi_dbg(ctx, "transfer %p", transfer );
+	usbi_dbg(ctx, "transfer %p", (void *) transfer );
 	usbi_mutex_lock(&itransfer->lock);
 	if (!(itransfer->state_flags & USBI_TRANSFER_IN_FLIGHT)
 			|| (itransfer->state_flags & USBI_TRANSFER_CANCELLING)) {
@@ -1711,9 +1717,13 @@ int usbi_handle_transfer_completion(struct usbi_transfer *itransfer,
 	flags = transfer->flags;
 	transfer->status = status;
 	transfer->actual_length = itransfer->transferred;
-	usbi_dbg(ctx, "transfer %p has callback %p", transfer, transfer->callback);
-	if (transfer->callback)
+	usbi_dbg(ctx, "transfer %p has callback %p",
+		 (void *) transfer, transfer->callback);
+	if (transfer->callback) {
+		libusb_lock_event_waiters (ctx);
 		transfer->callback(transfer);
+		libusb_unlock_event_waiters(ctx);
+	}
 	/* transfer might have been freed by the above call, do not use from
 	 * this point. */
 	if (flags & LIBUSB_TRANSFER_FREE_TRANSFER)
@@ -2843,7 +2853,7 @@ void usbi_handle_disconnect(struct libusb_device_handle *dev_handle)
 			break;
 
 		usbi_dbg(ctx, "cancelling transfer %p from disconnect",
-			 USBI_TRANSFER_TO_LIBUSB_TRANSFER(to_cancel));
+			 (void *) USBI_TRANSFER_TO_LIBUSB_TRANSFER(to_cancel));
 
 		usbi_mutex_lock(&to_cancel->lock);
 		usbi_backend.clear_transfer_priv(to_cancel);
